@@ -1,160 +1,161 @@
-package main
+ackage main
 
 import (
 	"encoding/json"
+
+	"log"
+
 	"net/http"
-	"strconv"
 
 	"github.com/gorilla/mux"
+
+	"github.com/jinzhu/gorm"
+
+	"github.com/rs/cors"
+
+	_ "github.com/jinzhu/gorm/dialects/postgres"
 )
 
-// User is a struct that represents a user in our application
-type User struct {
-	FullName string `json:"fullName"`
-	Username string `json:"username"`
-	Email    string `json:"email"`
+type Driver struct {
+	gorm.Model
+
+	Name string
+
+	License string
+
+	Cars []Car
 }
 
-// Post is a struct that represents a single post
-type Post struct {
-	Title  string `json:"title"`
-	Body   string `json:"body"`
-	Author User   `json:"author"`
+type Car struct {
+	gorm.Model
+
+	Year int
+
+	Make string
+
+	ModelName string
+
+	DriverID int
 }
 
-var posts []Post = []Post{}
+var db *gorm.DB
+
+var err error
 
 func main() {
+
 	router := mux.NewRouter()
 
-	router.HandleFunc("/posts", addItem).Methods("POST")
+	db, err = gorm.Open("postgres", "host=localhost port=5432 user=postgres dbname=workdb sslmode=disable password=sreenath15")
 
-	router.HandleFunc("/posts", getAllPosts).Methods("GET")
-
-	router.HandleFunc("/posts/{id}", getPost).Methods("GET")
-
-	router.HandleFunc("/posts/{id}", updatePost).Methods("PUT")
-
-	router.HandleFunc("/posts/{id}", patchPost).Methods("PATCH")
-
-	router.HandleFunc("/posts/{id}", deletePost).Methods("DELETE")
-
-	http.ListenAndServe(":5000", router)
-}
-
-func getPost(w http.ResponseWriter, r *http.Request) {
-	// get the ID of the post from the route parameter
-	var idParam string = mux.Vars(r)["id"]
-	id, err := strconv.Atoi(idParam)
 	if err != nil {
-		// there was an error
-		w.WriteHeader(400)
-		w.Write([]byte("ID could not be converted to integer"))
-		return
+
+		panic("failed to connect database")
+
 	}
 
-	// error checking
-	if id >= len(posts) {
-		w.WriteHeader(404)
-		w.Write([]byte("No post found with specified ID"))
-		return
-	}
+	defer db.Close()
 
-	post := posts[id]
+	db.AutoMigrate(&Driver{})
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(post)
+	db.AutoMigrate(&Car{})
+
+	router.HandleFunc("/cars", GetCars).Methods("GET")
+
+	router.HandleFunc("/cars/{id}", GetCar).Methods("GET")
+
+	router.HandleFunc("/drivers/{id}", GetDriver).Methods("GET")
+
+	router.HandleFunc("/cars/{id}", DeleteCar).Methods("DELETE")
+
+	router.HandleFunc("/addcar", AddCar).Methods("POST")
+
+	router.HandleFunc("/adddriver", AddDriver).Methods("POST")
+
+	handler := cors.Default().Handler(router)
+
+	log.Fatal(http.ListenAndServe(":8080", handler))
+
 }
 
-func getAllPosts(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(posts)
+func GetCars(w http.ResponseWriter, r *http.Request) {
+
+	var cars []Car
+
+	db.Find(&cars)
+
+	json.NewEncoder(w).Encode(&cars)
+
 }
 
-func addItem(w http.ResponseWriter, r *http.Request) {
-	// get Item value from the JSON body
-	var newPost Post
-	json.NewDecoder(r.Body).Decode(&newPost)
+func GetCar(w http.ResponseWriter, r *http.Request) {
 
-	posts = append(posts, newPost)
+	params := mux.Vars(r)
+
+	var car Car
+
+	db.First(&car, params["id"])
+
+	json.NewEncoder(w).Encode(&car)
+
+}
+
+func GetDriver(w http.ResponseWriter, r *http.Request) {
+
+	params := mux.Vars(r)
+
+	var driver Driver
+
+	var cars []Car
+
+	db.First(&driver, params["id"])
+
+	db.Model(&driver).Related(&cars)
+
+	driver.Cars = cars
+
+	json.NewEncoder(w).Encode(&driver)
+
+}
+
+func DeleteCar(w http.ResponseWriter, r *http.Request) {
+
+	params := mux.Vars(r)
+
+	var car Car
+
+	db.First(&car, params["id"])
+
+	db.Delete(&car)
+
+	var cars []Car
+
+	db.Find(&cars)
+
+	json.NewEncoder(w).Encode(&cars)
+
+}
+
+func AddCar(w http.ResponseWriter, r *http.Request) {
+	var car Car
+
+	json.NewDecoder(r.Body).Decode(&car)
+
+	db.Create(&car)
 
 	w.Header().Set("Content-Type", "application/json")
 
-	json.NewEncoder(w).Encode(posts)
+	json.NewEncoder(w).Encode(car)
 }
 
-func updatePost(w http.ResponseWriter, r *http.Request) {
-	// get the ID of the post from the route parameters
-	var idParam string = mux.Vars(r)["id"]
-	id, err := strconv.Atoi(idParam)
-	if err != nil {
-		w.WriteHeader(400)
-		w.Write([]byte("ID could not be converted to integer"))
-		return
-	}
+func AddDriver(w http.ResponseWriter, r *http.Request) {
+	var driver Driver
 
-	// error checking
-	if id >= len(posts) {
-		w.WriteHeader(404)
-		w.Write([]byte("No post found with specified ID"))
-		return
-	}
+	json.NewDecoder(r.Body).Decode(&driver)
 
-	// get the value from JSON body
-	var updatedPost Post
-	json.NewDecoder(r.Body).Decode(&updatedPost)
-
-	posts[id] = updatedPost
+	db.Create(&driver)
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(updatedPost)
-}
 
-func patchPost(w http.ResponseWriter, r *http.Request) {
-	// get the ID of the post from the route parameters
-	var idParam string = mux.Vars(r)["id"]
-	id, err := strconv.Atoi(idParam)
-	if err != nil {
-		w.WriteHeader(400)
-		w.Write([]byte("ID could not be converted to integer"))
-		return
-	}
-
-	// error checking
-	if id >= len(posts) {
-		w.WriteHeader(404)
-		w.Write([]byte("No post found with specified ID"))
-		return
-	}
-
-	// get the current value
-	post := &posts[id]
-	json.NewDecoder(r.Body).Decode(post)
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(post)
-}
-
-func deletePost(w http.ResponseWriter, r *http.Request) {
-	// get the ID of the post from the route parameters
-	var idParam string = mux.Vars(r)["id"]
-	id, err := strconv.Atoi(idParam)
-	if err != nil {
-		w.WriteHeader(400)
-		w.Write([]byte("ID could not be converted to integer"))
-		return
-	}
-
-	// error checking
-	if id >= len(posts) {
-		w.WriteHeader(404)
-		w.Write([]byte("No post found with specified ID"))
-		return
-	}
-
-	// Delete the post from the slice
-	// https://github.com/golang/go/wiki/SliceTricks#delete
-	posts = append(posts[:id], posts[id+1:]...)
-
-	w.WriteHeader(200)
+	json.NewEncoder(w).Encode(driver)
 }
